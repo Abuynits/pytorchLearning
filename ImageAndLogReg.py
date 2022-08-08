@@ -318,6 +318,9 @@ print('label:', label, ', predicted: ', predict_image(img, model))
 
 # look at overall loss and accuracy of the model on the test set:
 test_loader = DataLoader(test_dataset,batch_size=256)
+# can also do: DataLoader(train_ds, batch_size, shuffle=True, num+workers=4, pin_memory=True)
+# the num_workers are for parallelization
+# the pin memory is for using memory
 result = evaluate(model, test_loader)
 print(result) # need to report test accuracy in the findings
 
@@ -326,7 +329,10 @@ print(result) # need to report test accuracy in the findings
 # all training weights are in the state_dict()
 torch.save(model.state_dict(), 'mnist-logistic.pth')
 # to load it back:
-model2 = MnistModel()
+model2 = MnistModel(input_size,num_classes)
 model2.load_state_dict(torch.load("mnist-logistic.pth"))
 print(model2.state_dict()) # dont need to train them again
+
+# WHERE MAKE MODEL A neural network with 1 hidden layer
+
 
