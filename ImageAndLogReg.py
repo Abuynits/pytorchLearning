@@ -114,19 +114,48 @@ print(model.bias.shape)
 
 # print labels and shape of batch and pass images into the model
 class MnistModel(nn.Module):
-    def __init__(self, input_size, num_classes):
+    def __init__(self, input_size, hidden_size, out_size):
         # the constructor
         super().__init__()
-        self.linear = nn.Linear(input_size, num_classes)
+        self.linear1 = nn.Linear(input_size, hidden_size)
+        self.linear2 = nn.Linear(hidden_size, out_size)
 
     def forward(self, xb):
         # executed when pass inputs to the model
-        xb = xb.reshape(-1,
-                        784)  # use same data but lay out differently: retain batch dimension, but rest can be flattened
+        # can also flatten this way:
+        xb = xb.view(xb.size(0), -1)
+        # xb = xb.reshape(-1,
+        #               784)  # use same data but lay out differently: retain batch dimension, but rest can be flattened
         # puting a -1: telling pytorch for it to figure out what it should be; we are not hard coding the batch size
-        out = self.linear(xb)  # pass in the flatten out vectors to the input and it gets the output
+        out = self.linear1(xb)  # pass in the flatten out vectors to the input and it gets the output
+        # can do self.linear1= nn.Linear(28x28,16) # have 16 values now
+        # can do out=self.linear2(16,10) # take 16 values and tur ninto 10 values
+        # out = self.linear1(xb)
+        # out = self.linear2(out)
+        # all matrix multiplication
+        # issue: when expand self.lienar2(self.linear1)
+        # we do self.lienar2(xb@w1 +b)
+        # and therefore (xb @w1 + b1) @ w2 +b2 = xb @ (w1 @ w2) + xb @ ( b1 @ w1) + b2
+        # take the xb out:
+        # xb @ ( (w1(w2) + ( b1 @ w1 )) + b2 = xb @ w3 + b2
+        # we not achieve anything from this
+        # we just rearanged the packets and its as good as only multiplying thme together
+
+        out = F.relu(out)
+        # in betwee thne two linear levels
+        # now you can no longer simplify the equation
+        # we will apply relu to the output
+        # first layer will transform the input matrix to a ban intermediate output matrix: batch size x hidden_size
+        # hidden size is a preconfigured paramter eg 32 or 64
+        # then pass the intermediate outputs throug ha non-linear activation function
+        # then the result of the activation function is passed to the ouptu layer which gives us the size that we want
+        # we use the Rectified Linear Unit or ReLU function; relux (x) = max(0,x)
+        #
+        out = self.linear2(out)
+
         return out
-        # from the batch, get images and training out
+
+    # from the batch, get images and training out
 
     def training_step(self, batch):
         images, labels = batch
@@ -141,7 +170,7 @@ class MnistModel(nn.Module):
         out = self(images)  # Generate predictions
         loss = F.cross_entropy(out, labels)  # Calculate loss
         acc = accuracy(out, labels)  # Calculate accuracy (for particualr batch of training data)
-        return {'val_loss': loss, 'val_acc': acc}
+        return {'val_loss': loss.detach(), 'val_acc': acc}  # detach drops references to all things
 
     def validation_epoch_end(self, outputs):  # end of validation
         batch_losses = [x['val_loss'] for x in
@@ -156,108 +185,97 @@ class MnistModel(nn.Module):
         print("Epoch [{}], val_loss: {:.4f}, val_acc: {:.4f}".format(epoch, result['val_loss'], result['val_acc']))
 
 
-model = MnistModel(input_size, num_classes)
+input_size = 784
+hidden_size = 32  # this is the power: you can change this value
+num_classes = 10
+
+for param in model.parameters():
+    print(param)
+
+model = MnistModel(input_size, hidden_size, num_classes)
 for images, labels in train_loader:
-    print('output.shape:', images.shape)
     output = model(images)
+    loss = F.cross_entropy(output, labels)
+    print('loss: ', loss.item())
     break
 
 print('outputs.shape : ', output.shape)
 print('Sample outputs :\n', output[:2].data)
 
-# need to output probabilities and elements of the output row have to lie between 0 and 1
 
-# will use the softmax function
-print(torch.exp(output[0]))  # raise each outut to e to the power of the value in that output
-exps = torch.exp(output[0])
-# all numbers are now positive
-# still between 0 and 1, image can be of certain class
+# HOW TO USE GPU's
+# check if have nvidia CUDA drivers installed with torch.cuda.is_available
 
-# can take the exponenets and devide them by the sum of the exponents (get probls)
-probs = exps / torch.sum(exps)
-print(probs)
-# this is called the softmax function
+# need to have nvidia gpu for training
+# need to have nvidia drivers installed on gpu: nvidia cuda drivers
+# gpu has own ram and cpu available for it
 
-# you have the functional package and requires package and requires to use a specify a dimensiosn along which the softmax
-# this also forces the model to choose a specific number value
-probs = F.softmax(output, dim=1)
-# apply on the first dimension bc 0 dimension is on the batches
-# Look at sample probabilities
-print("Sample probabilities:\n", probs[:2].data)
-
-# Add up the probabilities of an output row
-print("Sum: ", torch.sum(probs[0]).item())
-
-# got 128 sets of probabilities each: pick the element of the highest value for the predicted value
-# if do torch.max, you will get the highes value and its index
-max_probs, preds = torch.max(probs, dim=1)
-print(preds)
-print(max_probs)
+def get_training_device():
+    if torch.cuda.is_available():
+        # the device checks if have cuda ( has nvidia gpu)
+        return torch.device('cuda')
+    else:
+        return torch.device('cpu')
 
 
-# see that the probabilities are not that high
-# compares bad with the labels as the model is randomized
-# need to evaluate how model perform: check what percentage matched in the model
-# do element wise comparison with the labels
+device = get_training_device()
+print(device)
+
+
+# Can also move data and model to a device:
+def to_device(data, device):
+    if isinstance(data, (list, tuple)):
+        # operate on tensors: have a to device on each list of tensor
+        return [to_device(x, device) for x in data]
+    # .to: accepts a device and the data is coppied from cpu to the gpu
+    # non_blocking: does not block you from executing the next steps
+    return data.to(device, non_blocking=True)
+
+
+# this will accept either a model or a tensor bc you are claling the to_device on each tensor in the data
+for images, labels in train_loader:
+    print(images.shape)
+    images = to_device(images, device)
+    print(images)
+    # will show that it is on the device (cpu in my case)
+    break
+
+
 def accuracy(outputs, labels):
     _, preds = torch.max(outputs, dim=1)
     return torch.tensor(torch.sum(preds == labels).item() / len(preds))
 
 
-acc = accuracy(output, labels)
-print(acc)
-# acc help us evaluate the model
-# cannot use as loss function for optimization
-# it is not a differentiable function
-# does not take into account the actual probabilities predicted by the model so it cant provide sufficient feedback
-# if do 1 with 12% - not look at what it predicted for the correct value
-# if model still predictive 1 but has higher probability for 3. accuracy not capture that. not look how do for correct value
-# cannot give feedback to training process
+# devine a Device Data loader class to wrap exsiting data loaders and move data to the selected device as batches are accessed
+# dont need to extend existing class, just need __iter__ method to retrieve batches of data nad a __len__ method to get number of batches
+class DeviceDataLoader():
+    def __init__(self, dl, device):
+        # take the data loader and the device
+        self.dl = dl
+        self.device = device
 
-# commonly used: cross entropy: have certain predictions, and have the actual labels
-# ignore the predictions for anything but the actual label, just take the prediction, and take a logorithm of 0.5
-# now the model should be as close to 1, bc log of 1 is 0 where loss is 0. if predict closs to 0, log(0.02) is a large negative value
+    def __iter__(self):
+        # have to call the yield method: yield batches of data fro mthe iterator
+        for b in self.dl:
+            # yield: in the first loop, the iter method is called, and once have yield, the method returns and pauses ther
+            # next loop: gets the next batch of data
+            # yield works with generators: like iterators: you can only iterate over once - not store all valeus in memory ,generate on the fly ( use yield)
+            # iterables ( lists ): store the value in memory ( use return )
+            yield to_device(b, self.device)
 
-# then apply a negative on top of the log that will make it a large positive value
-# when close to it, you will have a low loss,
-# this is differentiable; treat the label not as a number, convert it to a vector that has all 0's but at the wanted position
-
-# take log of all prediction and do dot product with the actual target vector
-
-loss_fn = F.cross_entropy
-
-loss = loss_fn(output, labels)  # pass in the outputs as it has softmax built into it ( perform cross entropy afterward)
-# takes the labels which are numbers and converts it to hot num encoded vectors ( all 0's and 1 one)
-print(loss)
+    def __len__(self):
+        # need to return the length of batches
+        return len(self.dl)
 
 
-# bc this is the negative log of the predicted probability of the correct label averaged over all training samples
-# you can look at the number 2.23 as e^-2.23 which is 0.1 of correct data
+train_loader = DeviceDataLoader(train_loader, device)
+val_loader = DeviceDataLoader(val_loader, device)
+# why moove in batches: not all of data can fit on GPU: need to have all of the model nad all of the data on the gpu
+for xb, yb in val_loader:
+    print('xb.device:', xb.device)
+    print('yb', yb)
 
-# TRAINING THE MODEL
 
-# # identical to linear regression but have a validation phase.
-# for epoch in range(num_epochs):
-#     # Training phase
-#     for batch in train_loader:
-#          # Generate predictions
-#          # Calculate loss
-#          # Compute gradients
-#          # Update weights
-#          # Reset gradients
-#
-#     # Validation phase
-#     for batch in val_loader:
-#          # Generate predictions
-#          # Calculate loss
-#          # Calculate metrics (accuracy etc.)
-# # Calculate average validation loss & metrics
-#
-# # Log epoch, loss & metrics for inspection
-
-# we can extend the model class to hold more functions and have the problem specific parts:
-
-# introduce fit and evaluation function:
 def fit(epochs, lr, model, train_loader, val_loader, opt_func=torch.optim.SGD):
     optimizer = opt_func(model.parameters(), lr)  # creates optimization functions ( uses torch.optim.sgd by default
     history = []  # for recording epoch-wise results
@@ -266,8 +284,10 @@ def fit(epochs, lr, model, train_loader, val_loader, opt_func=torch.optim.SGD):
 
         # Training Phase
         for batch in train_loader:  # iterate ove rbatches in data loader
-            loss = model.training_step(batch)  # call the training step and get back the loss
-            loss.backward()  # call to compute gradient descent
+            loss = model.training_step(batch)  # processes the batches
+            loss.backward()  # call to compute gradient descent now have 2 layers: the loss will put last gradients linear2
+            # and then bc the inputs to 2nd are from the outputs from thee first 21, it will go back and calcualte the ones from the first
+            # this is called back propagation
             optimizer.step()  # take gradients and subtracts the gradients, and multiplying with the learning rate
             optimizer.zero_grad()  # reset the gradients back to 0
 
@@ -286,53 +306,13 @@ def evaluate(model, val_loader):
     return model.validation_epoch_end(outputs)
 
 
-# can run on validation data loader;
-res0 = evaluate(model, val_loader)
+# need to make sure the data and the model's parameters (weights and biases) are oon the same device (CPU or GPU)
+model = MnistModel(input_size, hidden_size, num_classes)
+print(to_device(model,device))
+# see how the model performs on the validation set with the intial set of weights and biases:
+history = [evaluate(model,val_loader)] # with jsut initial set weights and biases
+history += fit(5,0.5,model,train_loader,val_loader) # using a higher learning rate that depends on the model
+print(history)
 
-history1 = fit(5, 0.001, model, train_loader, val_loader)
-
-# logistic regression hits the limits bc we assume a linear relationship, but it cannot be linear
-# this might not be a fair assumption to do
-
-# TESTING with individual images:
-
-# definie testing dataset:
-test_dataset = MNIST(root="./trainingData",
-                     train=False, transform=tranforms.ToTensor())
-img, label = test_dataset[0]
-plt.imshow(img[0], cmap='gray')
-print('shape:', img.shape)
-print('label:', label)
-
-
-# this is a sample where do prediction
-def predict_image(img, model):
-    # we already accept a batch: call unsqueeeze method to add another dimension to make a batch of 1 image
-    xb = img.unsqueeze(0)
-    yb = model(xb)  # the prediction is just hte image of the probabilityy
-    _, preds = torch.max(yb, dim=1)  # just return the highest probability
-    return preds[0].item()
-
-
-print('label:', label, ', predicted: ', predict_image(img, model))
-
-# look at overall loss and accuracy of the model on the test set:
-test_loader = DataLoader(test_dataset,batch_size=256)
-# can also do: DataLoader(train_ds, batch_size, shuffle=True, num+workers=4, pin_memory=True)
-# the num_workers are for parallelization
-# the pin memory is for using memory
-result = evaluate(model, test_loader)
-print(result) # need to report test accuracy in the findings
-
-
-# SAVING the model
-# all training weights are in the state_dict()
-torch.save(model.state_dict(), 'mnist-logistic.pth')
-# to load it back:
-model2 = MnistModel(input_size,num_classes)
-model2.load_state_dict(torch.load("mnist-logistic.pth"))
-print(model2.state_dict()) # dont need to train them again
-
-# WHERE MAKE MODEL A neural network with 1 hidden layer
-
-
+exit(1)
+# need to output probabilities and elements of the output row have to lie between 0 and 1
