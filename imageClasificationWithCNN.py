@@ -23,6 +23,37 @@ def show_example(img, label):
     plt.show()
 
 
+# make training better and better
+@torch.no_grad()  # tel when function being used, dont track the gradients
+def evaluate(model, val_loader):
+    model.eval()  # have certain layers only turn on in trianing and hidden in evaluation:
+    # tell the model is in training mode and to not use those levels
+    outputs = [model.validation_step(batch) for batch in val_loader]
+    return model.validation_epoch_end(outputs)
+
+
+def fit(epochs, lr, model, train_loader, val_loader, opt_func=torch.optim.SGD):
+    history = []
+    optimizer = opt_func(model.parameters(), lr)
+    for epoch in range(epochs):
+        # Training Phase
+        model.train()  # tell the model to use the training labels
+        train_losses = []  # now we will also finding the training loss
+        for batch in train_loader:
+            loss = model.training_step(batch)
+            train_losses.append(loss)
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+        # Validation phase
+        result = evaluate(model, val_loader)
+        result['train_loss'] = torch.stack(train_losses).mean().item()
+        # take the values for each loss and get the output from it
+        model.epoch_end(epoch, result)
+        history.append(result)
+    return history
+
+
 # show a batch of training data
 def show_batch(dl):
     for images, labels in dl:
@@ -46,6 +77,130 @@ def apply_kernel(image, kernel):
             output[i, j] = torch.sum(image[i:i + rk, j:j + ck] * kernel)
     return output
 
+
+def accuracy(outputs, labels):
+    _, preds = torch.max(outputs, dim=1)
+    return torch.tensor(torch.sum(preds == labels).item() / len(preds))
+
+
+input_size = 784
+hidden_size = 32  # this is the power: you can change this value
+num_classes = 10
+
+
+class ImageClassificationBase(nn.Module):
+    def training_step(self, batch):
+        images, labels = batch
+        out = self(images)  # Generate predictions
+        loss = F.cross_entropy(out, labels)  # Calculate loss
+        return loss
+
+    def validation_step(self, batch):
+        images, labels = batch
+        out = self(images)  # Generate predictions
+        loss = F.cross_entropy(out, labels)  # Calculate loss
+        acc = accuracy(out, labels)  # Calculate accuracy
+        return {'val_loss': loss.detach(), 'val_acc': acc}
+
+    def validation_epoch_end(self, outputs):
+        batch_losses = [x['val_loss'] for x in outputs]
+        epoch_loss = torch.stack(batch_losses).mean()  # Combine losses
+        batch_accs = [x['val_acc'] for x in outputs]
+        epoch_acc = torch.stack(batch_accs).mean()  # Combine accuracies
+        return {'val_loss': epoch_loss.item(), 'val_acc': epoch_acc.item()}
+
+    def epoch_end(self, epoch, result):
+        print("Epoch [{}], train_loss: {:.4f}, val_loss: {:.4f}, val_acc: {:.4f}".format(
+            epoch, result['train_loss'], result['val_loss'], result['val_acc']))
+
+
+def plot_accuracies(history):
+    accuracies = [x['val_acc'] for x in history]
+    plt.plot(accuracies, '-x')
+    plt.xlabel('epoch')
+    plt.ylabel('accuracy')
+    plt.title('Accuracy vs. No. of epochs');
+
+
+def get_default_device():
+    """Pick GPU if available, else CPU"""
+    if torch.cuda.is_available():
+        return torch.device('cuda')
+    else:
+        return torch.device('cpu')
+
+
+def to_device(data, device):
+    """Move tensor(s) to chosen device"""
+    if isinstance(data, (list, tuple)):
+        return [to_device(x, device) for x in data]
+    return data.to(device, non_blocking=True)
+
+def predict_image(img, model):
+    # Convert to a batch of 1
+    xb = to_device(img.unsqueeze[0],get_default_device())
+
+    # Get predictions from model
+    yb = model(xb)
+    # Pick index with highest probability
+    _, preds = torch.max(yb, dim=1)
+    # Retrieve the class label
+    return dataset.classes[preds[0].item()]
+
+
+"""
+image cnn notes:
+1 channel; the term filter and kernel are interchaneable, general case: they are different
+eah filter is a colelction of kernels witehre there being one kernel for every input channel to the layer and each kernel being unique
+
+process:
+for each input kernel, the filter process them and produces an output for each
+then each of the per-channel processed versions are then summed together to form one channel
+then add a bias term to the output kernel
+
+"""
+
+
+class Cifar10CnnModel(ImageClassificationBase):
+    def __init__(self):
+        super().__init__()
+        # sequential allows you to pass the inputs from the previous outputs
+        # want to increase the number of channels as you decrease the size of the image
+        self.network = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            # images are 3 channels of 32: take them and convert it to 32 channels
+            # take 3 channel of 32x32 and convert it to 32 channels
+            # image size stays the smame
+            nn.ReLU(),  # activation function
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),  # tale 32 channels and convert to 64
+            nn.ReLU(),  # the conv2d will reduce the mage size in half, but therefore
+            nn.MaxPool2d(2, 2),  # output: 64 x 16 x 16, previously they were 64 x 32 x 32
+
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),  # increase the channels again
+            nn.ReLU(),
+            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),  # keep number of channels the same
+            # each time add linear layer, you increase the power of the model ( makes it go deeper)
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),  # output: 128 x 8 x 8
+
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),  # output: 256 x 4 x 4
+            # takes the 256 x 4 x 4 and converts them to a single layer
+            nn.Flatten(),
+            # each image is down to a single vector of size 256*4*4
+            nn.Linear(256 * 4 * 4, 1024),
+            nn.ReLU(),
+            nn.Linear(1024, 512),
+            nn.ReLU(),
+            nn.Linear(512, 10))
+        # then bring it down to 10 outputs
+
+    def forward(self, xb):
+        # seq model and pass in the batch of data
+        return self.network(xb)
 
 
 if __name__ == '__main__':
@@ -173,3 +328,63 @@ if __name__ == '__main__':
         out = simple_model(images)
         print('out.shape:', out.shape)
         break
+    """
+    will get:
+    images.shape: torch.Size([128, 3, 32, 32])
+    out.shape: torch.Size([128, 8, 16, 16])
+    
+    we go 3 channel of 32 x 32 pixels to 8 channel of 16x16 pixels
+    To each one of the 3 channels, we apply a kernel, and then the outputs are added together
+    
+    we decrease the size of the image (feature map), but increase the number of channels: where logic takes place
+    
+    """
+
+    # continue adding conv and maxpool: need non linear actiavtion after convolution
+    # have input image ( decrease the size of the image but increase the number of channels)
+    # tjuhen do pooling which wiill decrease the image size
+    # will continue to do this by alternative convolution layer and poolinng until you will geta fully connected layer
+    # have a feature map of size 1x1, and then we flatten it out with a fully connected layer
+    model = Cifar10CnnModel()
+    for images, labels in train_dl:
+        print('images.shape:', images.shape)
+        out = model(images)
+        print('out.shape:', out.shape)
+        print('out[0]', out[0])
+        break
+
+    # use 10 epocs
+    num_epochs = 10
+    # this is a new optimizer: stochastic gradient descent subtracts quantity
+    # adam has momentum, weight decay: adam does better for plain stochastic gradinet descent
+    # call torch.optim to see all hyper parameters
+    opt_func = torch.optim.Adam
+    lr = 0.001
+
+    history = fit(num_epochs, lr, model, train_dl, val_dl, opt_func)
+    print(history)
+    plot_accuracies(history)
+    # see that the validation loss starts to rise
+    # see the trianing loss continues to decrease while the validation loss starts to licnrease
+    # over fitting: machine learning problems give bad results on real data
+    # as model grow bigger and bigger, the model has power and use power in long way
+    # model start to learn patterns unique to the training data
+    # this is what happens:
+    # see that htere are 55k images in trainings: if memorize 5-10 images, can increase the pattern
+    # model is overfitting to trainign data: the validation set say that somethign is wrong with the data
+    # the model starts to specialize for that trainign data set
+
+    # how avoid over fitting:
+    # need to gather more training data:
+    # need to go through roe data for training
+    # can also generate data via data augmentation
+    # crop, zoom in , zoom out: same set of 45k images, but see something different
+    # batch normalization and dropout (from a feature map, randomly set certain number of outputs to 0)
+    # can do nn.Dropout() from the amount of things that you want to drop out.
+    # nn.Dropout(0.4) -> good technique to set things to 0
+    # should only be applied during training
+    # during validation, we should nto drop i
+    #
+    img, label = test_dataset[0]
+    # plt.imshow(img.permute(1, 2, 0))
+    print('Label:', dataset.classes[label], ', Predicted:', predict_image(img, model))
