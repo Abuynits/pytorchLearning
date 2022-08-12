@@ -414,5 +414,33 @@ Wall time: 4min 24s
     
     """
     # when learnign rate is at max, there is bouncing around
-
-    #
+    """
+    trasnfer learning: a cnn have layers and so on and so on
+    the number of channels increase
+    they are shwing outputs of each training
+    after model is trained, each channel try to learn differerent things
+    each channel take somethign specific of the image going in
+    init layers identify smaller thigns ie curves and lines
+    later channels start identifying eyes, ears and so on later 
+    over time take the features put them in a couple layers and classify them
+    take images, break up into featuers
+    high level; tkae the levels of the car itself
+    we create models on image dataset
+    train the models and and then export the weights need ability to change it:
+    after the final pooling layer: image net have classifiers for 1000k classes: we replace their connected layer with our own
+    have our model a good starting point: have learning on many images and use starting point on our dataset
+    transfer learning make sense bc we have many images and day to day images will use transfer learnings
+    get a better result have data:
+    
+    got a resize function: can bump up size of images: allow network to have predicutiosn for images of different scales
+    have randomreizecrop and resize for tensor
+    
+    also take a look at resnet 18 which is resnet 9 double
+    
+    we can freeze the last layers by setting freeze = false, and then train the final layer
+    for the lowest layers you dont want to change the weights too much
+    
+    
+    
+    
+    """
